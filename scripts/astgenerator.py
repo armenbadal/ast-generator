@@ -16,7 +16,13 @@ class Entity:
         self.children = []
 
     def __str__(self):
-        return f'{self.name}: <{self.slots}>'
+        result = f'{self.name}\n'
+        result += f'1  {self.kind}\n'
+        result += f'2  {self.parent}\n'
+        result += f'3  {self.children}\n'
+        s = [str(x) for x in self.slots]
+        result += f'4  {s}\n'
+        return result
 
 
 # Թոքեններ
@@ -188,20 +194,19 @@ class JavaGenerator(Generator):
             indent, name, kind, slots = definition
             entity = Entity(name)
 
+            entity.parent = bases[-1]
             if indent > current_indent:
                 bases.append(name)
             elif indent < current_indent:
                 bases.pop()
             current_indent = indent
-            entity.parent = bases[-1]
 
             if kind == '!':
                 entity.kind = 'final'
             if len(slots) == 0:
                 entity.kind = 'abstract'
 
-            for name, type in slots:
-                entity.slots.append(Slot(name, type))
+            entity.slots = [Slot(n, t) for n, t in slots]
 
             print(entity)
 
