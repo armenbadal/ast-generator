@@ -1,4 +1,24 @@
 
+class Slot:
+    def __init__(self, name, type):
+        self.name = name
+        self.type = type
+
+    def __str__(self):
+        return f'{self.name}: {self.type}'
+
+class Entity:
+    def __init__(self, name):
+        self.name = name
+        self.kind = ''
+        self.slots = []
+        self.parent = ''
+        self.children = []
+
+    def __str__(self):
+        return f'{self.name}: <{self.slots}>'
+
+
 # Թոքեններ
 IDENTIFIER = 'IDENTIFIER'
 LEFT_BRACKET = '['
@@ -19,8 +39,9 @@ class Lexeme:
 class Scanner:
     def __init__(self, source):
         self.source = source
-        self.position = 0
         self.length = len(source)
+        self.position = 0
+        self.line = 1
 
     def next_lexeme(self):
         if self.position >= self.length:
@@ -55,6 +76,7 @@ class Scanner:
             return Lexeme(COMMA, ',')
         elif current_char == '\n':
             self.position += 1
+            self.line += 1
             return Lexeme(NEW_LINE, '\n')
         elif current_char.isspace():
             self.position += 1
@@ -73,15 +95,15 @@ class Parser:
             value = self.lookahead.value
             self.lookahead = self.scanner.next_lexeme()
             return value
-        
-        raise ValueError(f'Expected token {token}, got {self.lookahead.token}.')
+
+        raise ValueError(f'Line {self.scanner.line}: Expected token {token}, got {self.lookahead.token}.')
 
     def has(self, token):
         return self.lookahead.token == token
 
     def parse(self):
         verbatims = []
-        if self.has(VERBATIM):
+        while self.has(VERBATIM):
             verbatim = self.match(VERBATIM)
             verbatims.append(verbatim)
             self.parse_new_lines()
@@ -96,13 +118,17 @@ class Parser:
     def parse_definition(self):
         indent = self.parse_indent()
         name = self.match(IDENTIFIER)
-        slots = None
+        marker = ''
+        if self.has(EXCLAMATION):
+            self.match(EXCLAMATION)
+            marker = '!'
+        slots = []
         if self.has(LEFT_BRACKET):
             self.match(LEFT_BRACKET)
             slots = self.parse_slots()
             self.match(RIGHT_BRACKET)
         self.parse_new_lines()
-        return (indent, name, slots)
+        return (indent, name, marker, slots)
 
     def parse_indent(self):
         count = 0
@@ -114,7 +140,7 @@ class Parser:
     def parse_slots(self):
         if self.has(RIGHT_BRACKET):
             return []
-        
+
         slots = []
         slots.append(self.parse_slot())
         while self.lookahead.token == COMMA:
@@ -125,13 +151,21 @@ class Parser:
     def parse_slot(self):
         name = self.match(IDENTIFIER)
         self.match(COLON)
+        prefix = ''
+        if self.has(LEFT_BRACKET):
+            self.match(LEFT_BRACKET)
+            self.match(RIGHT_BRACKET)
+            prefix = '[]'
         type = self.match(IDENTIFIER)
-        return (name, type)
+        return (name, prefix + type)
 
     def parse_new_lines(self):
         while self.lookahead.token == NEW_LINE:
             self.match(NEW_LINE)
 
+    def skip_spaces(self):
+        while self.lookahead.token == SPACE:
+            self.match(SPACE)
 
 
 class Generator:
@@ -148,16 +182,38 @@ class JavaGenerator(Generator):
         verbatims, definitions = self.ast
         preamble = '\n'.join(verbatims)
 
+        current_indent = -1
+        bases = ['Object']
+        for definition in definitions:
+            indent, name, kind, slots = definition
+            entity = Entity(name)
 
-    def generate_one_class(self, preamble, definition):
-        pass
+            if indent > current_indent:
+                bases.append(name)
+            elif indent < current_indent:
+                bases.pop()
+            current_indent = indent
+            entity.parent = bases[-1]
+
+            if kind == '!':
+                entity.kind = 'final'
+            if len(slots) == 0:
+                entity.kind = 'abstract'
+
+            for name, type in slots:
+                entity.slots.append(Slot(name, type))
+
+            print(entity)
 
 
 if __name__ == "__main__":
-    with open('examples/ex01.ast', 'r') as f:
-        source = f.read()
-    scanner = Scanner(source)
-    parser = Parser(scanner)
-    result = parser.parse()
-    print(result)
-
+    try:
+        with open('examples/ex01.ast', 'r') as f:
+            source = f.read()
+        scanner = Scanner(source)
+        parser = Parser(scanner)
+        result = parser.parse()
+        generator = JavaGenerator(result, '.')
+        generator.generate()
+    except ValueError as e:
+        print(e)
