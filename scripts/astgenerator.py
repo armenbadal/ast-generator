@@ -7,23 +7,31 @@ class Slot:
     def __str__(self):
         return f'{self.name}: {self.type}'
 
-class Entity:
+class Node:
     def __init__(self, name):
         self.name = name
         self.kind = ''
         self.slots = []
         self.parent = ''
         self.children = []
-
+   
     def __str__(self):
-        result = f'{self.name}\n'
-        result += f'1  {self.kind}\n'
-        result += f'2  {self.parent}\n'
-        result += f'3  {self.children}\n'
-        s = [str(x) for x in self.slots]
-        result += f'4  {s}\n'
-        return result
-
+        code = 'public ';
+        if self.kind == 'interface':
+            code += 'interface '
+        elif self.kind == 'abstract':
+            code += 'abstract class '
+        elif self.kind == 'class':
+            code += 'class '
+        if self.parent != '':
+            code += f'{self.name} extends {self.parent} '
+        else:
+            code += f'{self.name} '
+        code += '{\n'
+        for slot in self.slots:
+            code += f'    public {slot.type} {slot.name};\n'
+        code += '}\n'
+        return code
 
 # Թոքեններ
 IDENTIFIER = 'IDENTIFIER'
@@ -90,7 +98,6 @@ class Scanner:
         else:
             raise ValueError(f'Unexpected character: {current_char}')
 
-
 class Parser:
     def __init__(self, scanner):
         self.scanner = scanner
@@ -108,18 +115,52 @@ class Parser:
         return self.lookahead.token == token
 
     def parse(self):
+        verbatims = self.parse_verbatims()
+        definitions = self.parse_definitions()
+        verified = self.verify(definitions)
+        return (verbatims, verified)
+    
+    def verify(self, definitions):
+        nodes = {}
+        current_indent = -1
+        bases = []
+        for i, definition in enumerate(definitions):
+            indent, name, kind, slots = definition
+            nodes[name] = Node(name)
+
+            if indent > current_indent:
+                if i != 0:
+                    bases.append(definitions[i-1][1])
+            elif indent < current_indent:
+                bases.pop()
+            current_indent = indent
+            if len(bases) > 0:
+                pr = bases[-1]
+                nodes[name].parent = pr
+                nodes[pr].children.append(name)
+                
+            nodes[name].kind = kind
+
+            if slots is not None and len(slots) != 0:
+                nodes[name].slots = [Slot(n, t) for n, t in slots]
+        
+        return nodes
+
+    def parse_verbatims(self):
         verbatims = []
         while self.has(VERBATIM):
             verbatim = self.match(VERBATIM)
             verbatims.append(verbatim)
             self.parse_new_lines()
+        return verbatims
 
+    def parse_definitions(self):
         definitions = []
         while self.lookahead.token != EOF:
             definition = self.parse_definition()
             definitions.append(definition)
 
-        return (verbatims, definitions)
+        return definitions
 
     def parse_definition(self):
         indent = self.parse_indent()
@@ -128,7 +169,7 @@ class Parser:
         if self.has(EXCLAMATION):
             self.match(EXCLAMATION)
             marker = '!'
-        slots = []
+        slots = None
         if self.has(LEFT_BRACKET):
             self.match(LEFT_BRACKET)
             slots = self.parse_slots()
@@ -188,28 +229,8 @@ class JavaGenerator(Generator):
         verbatims, definitions = self.ast
         preamble = '\n'.join(verbatims)
 
-        current_indent = -1
-        bases = ['Object']
-        for definition in definitions:
-            indent, name, kind, slots = definition
-            entity = Entity(name)
-
-            entity.parent = bases[-1]
-            if indent > current_indent:
-                bases.append(name)
-            elif indent < current_indent:
-                bases.pop()
-            current_indent = indent
-
-            if kind == '!':
-                entity.kind = 'final'
-            if len(slots) == 0:
-                entity.kind = 'abstract'
-
-            entity.slots = [Slot(n, t) for n, t in slots]
-
-            print(entity)
-
+        for name, node in definitions.items():
+            print(name, node)
 
 if __name__ == "__main__":
     try:
