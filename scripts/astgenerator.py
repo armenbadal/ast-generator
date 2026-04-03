@@ -8,36 +8,17 @@ class Slot:
         return f'{self.name}: {self.type}'
 
 class Node:
-    def __init__(self, name):
+    def __init__(self, name, slots):
         self.name = name
-        self.kind = ''
-        self.slots = []
+        self.slots = slots
         self.parent = ''
-        self.children = []
-   
-    def __str__(self):
-        code = 'public ';
-        if self.kind == 'interface':
-            code += 'interface '
-        elif self.kind == 'abstract':
-            code += 'abstract class '
-        elif self.kind == 'class':
-            code += 'class '
-        if self.parent != '':
-            code += f'{self.name} extends {self.parent} '
-        else:
-            code += f'{self.name} '
-        code += '{\n'
-        for slot in self.slots:
-            code += f'    public {slot.type} {slot.name};\n'
-        code += '}\n'
-        return code
+        self.children = None
+
 
 # Թոքեններ
-IDENTIFIER = 'IDENTIFIER'
+IDENTIFIER = 'ID'
 LEFT_BRACKET = '['
 RIGHT_BRACKET = ']'
-EXCLAMATION = '!'
 COLON = ':'
 COMMA = ','
 VERBATIM = '@'
@@ -46,9 +27,9 @@ SPACE = '␣'
 EOF = 'EOF'
 
 class Lexeme:
-    def __init__(self, token, value):
+    def __init__(self, token, value = None):
         self.token = token
-        self.value = value
+        self.value = self.token if value is None else value
 
 class Scanner:
     def __init__(self, source):
@@ -59,7 +40,7 @@ class Scanner:
 
     def next_lexeme(self):
         if self.position >= self.length:
-            return Lexeme(EOF, None)
+            return Lexeme(EOF)
 
         current_char = self.source[self.position]
 
@@ -73,28 +54,28 @@ class Scanner:
             while self.position < self.length and self.source[self.position] != '\n':
                 self.position += 1
             return Lexeme(VERBATIM, self.source[start_pos+1:self.position])
-        elif current_char == '[':
-            self.position += 1
-            return Lexeme(LEFT_BRACKET, '[')
-        elif current_char == ']':
-            self.position += 1
-            return Lexeme(RIGHT_BRACKET, ']')
-        elif current_char == '!':
-            self.position += 1
-            return Lexeme(EXCLAMATION, '!')
-        elif current_char == ':':
-            self.position += 1
-            return Lexeme(COLON, ':')
-        elif current_char == ',':
-            self.position += 1
-            return Lexeme(COMMA, ',')
         elif current_char == '\n':
             self.position += 1
             self.line += 1
-            return Lexeme(NEW_LINE, '\n')
+            return Lexeme(NEW_LINE)
         elif current_char.isspace():
+            spaces = ''
+            while self.source[self.position].isspace():
+                self.position += 1
+                spaces += ' '
+            return Lexeme(SPACE, spaces)
+        elif current_char == '[':
             self.position += 1
-            return Lexeme(SPACE, ' ')
+            return Lexeme(LEFT_BRACKET)
+        elif current_char == ']':
+            self.position += 1
+            return Lexeme(RIGHT_BRACKET)
+        elif current_char == ':':
+            self.position += 1
+            return Lexeme(COLON)
+        elif current_char == ',':
+            self.position += 1
+            return Lexeme(COMMA)
         else:
             raise ValueError(f'Unexpected character: {current_char}')
 
@@ -116,36 +97,9 @@ class Parser:
 
     def parse(self):
         verbatims = self.parse_verbatims()
-        definitions = self.parse_definitions()
-        verified = self.verify(definitions)
-        return (verbatims, verified)
+        definitions = self.parse_definitions('')
+        return (verbatims, definitions)
     
-    def verify(self, definitions):
-        nodes = {}
-        current_indent = -1
-        bases = []
-        for i, definition in enumerate(definitions):
-            indent, name, kind, slots = definition
-            nodes[name] = Node(name)
-
-            if indent > current_indent:
-                if i != 0:
-                    bases.append(definitions[i-1][1])
-            elif indent < current_indent:
-                bases.pop()
-            current_indent = indent
-            if len(bases) > 0:
-                pr = bases[-1]
-                nodes[name].parent = pr
-                nodes[pr].children.append(name)
-                
-            nodes[name].kind = kind
-
-            if slots is not None and len(slots) != 0:
-                nodes[name].slots = [Slot(n, t) for n, t in slots]
-        
-        return nodes
-
     def parse_verbatims(self):
         verbatims = []
         while self.has(VERBATIM):
@@ -154,35 +108,37 @@ class Parser:
             self.parse_new_lines()
         return verbatims
 
-    def parse_definitions(self):
-        definitions = []
-        while self.lookahead.token != EOF:
-            definition = self.parse_definition()
-            definitions.append(definition)
+    def parse_definitions(self, indent):
+        head = self.parse_definition(indent)
 
-        return definitions
+        children = []
+        while self.has(SPACE) and self.lookahead.value == indent + '  ':
+            child = self.parse_definitions(indent + '  ')
+            child.parent = head.name
+            children.append(child)
+        if len(children) != 0:
+            head.children = children
 
-    def parse_definition(self):
-        indent = self.parse_indent()
+        return head
+
+    def parse_definition(self, indent):
+        if self.has(SPACE):
+            if self.lookahead.value == indent:
+                self.match(SPACE)
+            else:
+                raise ValueError('Expected correct indentation.')
+
         name = self.match(IDENTIFIER)
-        marker = ''
-        if self.has(EXCLAMATION):
-            self.match(EXCLAMATION)
-            marker = '!'
+
         slots = None
         if self.has(LEFT_BRACKET):
             self.match(LEFT_BRACKET)
             slots = self.parse_slots()
             self.match(RIGHT_BRACKET)
-        self.parse_new_lines()
-        return (indent, name, marker, slots)
 
-    def parse_indent(self):
-        count = 0
-        while self.lookahead.token == SPACE:
-            count += 1
-            self.match(SPACE)
-        return count
+        self.parse_new_lines()
+
+        return Node(name, slots)
 
     def parse_slots(self):
         if self.has(RIGHT_BRACKET):
@@ -204,15 +160,11 @@ class Parser:
             self.match(RIGHT_BRACKET)
             prefix = '[]'
         type = self.match(IDENTIFIER)
-        return (name, prefix + type)
+        return Slot(name, prefix + type)
 
     def parse_new_lines(self):
         while self.lookahead.token == NEW_LINE:
             self.match(NEW_LINE)
-
-    def skip_spaces(self):
-        while self.lookahead.token == SPACE:
-            self.match(SPACE)
 
 
 class Generator:
@@ -220,17 +172,46 @@ class Generator:
         self.ast = ast
         self.directory = directory
 
-
-class JavaGenerator(Generator):
-    def __init__(self, ast, directory):
-        super().__init__(ast, directory)
-
     def generate(self):
-        verbatims, definitions = self.ast
+        verbatims, tree = self.ast
         preamble = '\n'.join(verbatims)
+        self._generate(tree)
 
-        for name, node in definitions.items():
-            print(name, node)
+    def _generate(self, tree: Node):
+        c = self._generate_node(tree)
+        print(c)
+        if tree.children is not None:
+            for ch in tree.children:
+                self._generate(ch)
+
+    def _generate_node(self, node: Node):
+        code = 'public '
+
+        if node.children is not None:
+            code += 'sealed '
+        else:
+            code += 'final '
+
+        if node.slots is None:
+            code += 'interface '
+        else:
+            code += 'class '
+
+        code += node.name
+
+        if node.children is not None:
+            code += ' permits '
+            code += ', '.join([n.name for n in node.children])
+        code += ' {\n'
+
+        if node.slots is not None:
+            for s in node.slots:
+                code += '  public ' + str(s) + ';\n'
+
+        code += '}\n'
+        return code
+
+
 
 if __name__ == "__main__":
     try:
@@ -238,8 +219,8 @@ if __name__ == "__main__":
             source = f.read()
         scanner = Scanner(source)
         parser = Parser(scanner)
-        result = parser.parse()
-        generator = JavaGenerator(result, '.')
+        ast = parser.parse()
+        generator = Generator(ast, '.')
         generator.generate()
     except ValueError as e:
         print(e)

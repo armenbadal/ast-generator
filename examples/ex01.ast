@@ -3,9 +3,10 @@
 
 Node
   Program[file:String]
+  Subroutine[name:String,parameters:[]String,body:Statement]
   Statement[]
-    Sequence![items:[]Statement]
-    If![condition:Expression,decision:Statement,alternative:Statement]
+    Sequence[items:[]Statement]
+    If[condition:Expression,decision:Statement,alternative:Statement]
   Expression[]
     Variable[name:String]
     NumberLiteral[value:double]
