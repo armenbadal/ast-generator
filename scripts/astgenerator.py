@@ -1,17 +1,16 @@
+import os
+import argparse
 
 class Slot:
     def __init__(self, name, type):
         self.name = name
         self.type = type
 
-    def __str__(self):
-        return f'{self.name}: {self.type}'
-
 class Node:
     def __init__(self, name, slots):
         self.name = name
         self.slots = slots
-        self.parent = ''
+        self.parent = None
         self.children = None
 
 
@@ -19,6 +18,8 @@ class Node:
 IDENTIFIER = 'ID'
 LEFT_BRACKET = '['
 RIGHT_BRACKET = ']'
+LEFT_BRACE = '{'
+RIGHT_BRACE = '}'
 COLON = ':'
 COMMA = ','
 VERBATIM = '@'
@@ -70,6 +71,12 @@ class Scanner:
         elif current_char == ']':
             self.position += 1
             return Lexeme(RIGHT_BRACKET)
+        elif current_char == '{':
+            self.position += 1
+            return Lexeme(LEFT_BRACE)
+        elif current_char == '}':
+            self.position += 1
+            return Lexeme(RIGHT_BRACE)
         elif current_char == ':':
             self.position += 1
             return Lexeme(COLON)
@@ -114,7 +121,7 @@ class Parser:
         children = []
         while self.has(SPACE) and self.lookahead.value == indent + '  ':
             child = self.parse_definitions(indent + '  ')
-            child.parent = head.name
+            child.parent = head
             children.append(child)
         if len(children) != 0:
             head.children = children
@@ -169,17 +176,17 @@ class Parser:
 
 class Generator:
     def __init__(self, ast, directory):
-        self.ast = ast
+        verbatims, tree = ast
+        self.preamble = '\n'.join(verbatims)
+        self.tree = tree
         self.directory = directory
+        os.makedirs(directory, exist_ok=True)
 
     def generate(self):
-        verbatims, tree = self.ast
-        preamble = '\n'.join(verbatims)
-        self._generate(tree)
+        self._generate(self.tree)
 
     def _generate(self, tree: Node):
-        c = self._generate_node(tree)
-        print(c)
+        self._generate_node(tree)
         if tree.children is not None:
             for ch in tree.children:
                 self._generate(ch)
@@ -187,40 +194,79 @@ class Generator:
     def _generate_node(self, node: Node):
         code = 'public '
 
-        if node.children is not None:
-            code += 'sealed '
-        else:
-            code += 'final '
-
         if node.slots is None:
-            code += 'interface '
+            code += 'sealed interface '
         else:
-            code += 'class '
+            if node.children is None:
+                code += 'final class '
+            else:
+                code += 'sealed abstract class '
 
         code += node.name
+
+        if node.parent is not None:
+            pr = node.parent
+            if pr.slots is None:
+                code += ' implements '
+            else:
+                code += ' extends '
+            code += node.parent.name
 
         if node.children is not None:
             code += ' permits '
             code += ', '.join([n.name for n in node.children])
+
         code += ' {\n'
 
         if node.slots is not None:
             for s in node.slots:
-                code += '  public ' + str(s) + ';\n'
+                type = s.type;
+                if s.type.startswith('[]'):
+                    type = f'List<{s.type[2:]}>'
+                code += f'  public {type} {s.name};\n'
+
+        if 'final class' in code:
+            params = []
+            body = ''
+            for s in node.slots:
+                type = s.type;
+                if s.type.startswith('[]'):
+                    type = f'List<{s.type[2:]}>'
+                params.append(f'{type} {s.name}')
+                body += f'    this.{s.name} = {s.name};\n'
+
+            paramcode = ', '.join(params)
+            code += f'\n  public {node.name}({paramcode}) {{\n{body}  }}\n'
 
         code += '}\n'
-        return code
+
+        with open(f'{self.directory}/{node.name}.java', 'w') as f:
+            f.write(self.preamble)
+            f.write('\n\n')
+            if 'List<' in code:
+                f.write('import java.util.List;')
+                f.write('\n\n')
+            f.write(code)
+
+    
 
 
 
 if __name__ == "__main__":
+    argp = argparse.ArgumentParser(description='Generate AST Java classes from a definition file')
+    argp.add_argument('input', help='path to input AST definition file')
+    argp.add_argument('output', help='output directory for generated .java files')
+    args = argp.parse_args()
+
     try:
-        with open('examples/ex01.ast', 'r') as f:
+        with open(args.input, 'r') as f:
             source = f.read()
         scanner = Scanner(source)
         parser = Parser(scanner)
         ast = parser.parse()
-        generator = Generator(ast, '.')
+        generator = Generator(ast, args.output)
         generator.generate()
+    except FileNotFoundError as e:
+        print(f'File not found: {e.filename}')
     except ValueError as e:
         print(e)

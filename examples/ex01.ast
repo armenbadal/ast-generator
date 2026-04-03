@@ -1,5 +1,4 @@
 @package ast;
-@import java.lang.list;
 
 Node
   Program[file:String]
