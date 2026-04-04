@@ -1,11 +1,5 @@
 import os
 import argparse
-
-class Slot:
-    def __init__(self, name, type):
-        self.name = name
-        self.type = type
-
 class Node:
     def __init__(self, name, slots):
         self.name = name
@@ -60,7 +54,7 @@ class Scanner:
             return Lexeme(NEW_LINE)
         elif current_char.isspace():
             spaces = ''
-            while self.source[self.position].isspace():
+            while self.position < self.length and self.source[self.position].isspace():
                 self.position += 1
                 spaces += ' '
             return Lexeme(SPACE, spaces)
@@ -159,8 +153,8 @@ class Parser:
             self.match(LEFT_BRACKET)
             self.match(RIGHT_BRACKET)
             prefix = '[]'
-        type = self.match(IDENTIFIER)
-        return Slot(name, prefix + type)
+        typ = self.match(IDENTIFIER)
+        return (name, prefix + typ)
 
     def parse_new_lines(self):
         while self.lookahead.token == NEW_LINE:
@@ -212,28 +206,25 @@ class Generator:
         code += ' {\n'
 
         if node.slots is not None:
-            for s in node.slots:
-                type = s.type;
-                if s.type.startswith('[]'):
-                    type = f'List<{s.type[2:]}>'
-                code += f'  public {type} {s.name};\n'
+            for nm, tp in node.slots:
+                decl = self._slot_declaration(nm, tp)
+                code += f'  public {decl};\n'
 
         if 'final class' in code:
             params = []
             body = ''
-            for s in node.slots:
-                type = s.type;
-                if s.type.startswith('[]'):
-                    type = f'List<{s.type[2:]}>'
-                params.append(f'{type} {s.name}')
-                body += f'    this.{s.name} = {s.name};\n'
+            for nm, tp in node.slots:
+                decl = self._slot_declaration(nm, tp)
+                params.append(decl)
+                body += f'    this.{nm} = {nm};\n'
 
             paramcode = ', '.join(params)
             code += f'\n  public {node.name}({paramcode}) {{\n{body}  }}\n'
 
         code += '}\n'
 
-        with open(f'{self.directory}/{node.name}.java', 'w') as f:
+        path = os.path.join(self.directory, f'{node.name}.java')
+        with open(path, 'w') as f:
             f.write(self.preamble)
             f.write('\n\n')
             if 'List<' in code:
@@ -241,7 +232,10 @@ class Generator:
                 f.write('\n\n')
             f.write(code)
 
-    
+    def _slot_declaration(self, nm, tp):
+        if tp.startswith('[]'):
+            tp = f'List<{tp[2:]}>'
+        return f'{tp} {nm}'
 
 
 
@@ -254,9 +248,7 @@ if __name__ == "__main__":
     try:
         with open(args.input, 'r') as f:
             source = f.read()
-        scanner = Scanner(source)
-        parser = Parser(scanner)
-        ast = parser.parse()
+        ast = Parser(Scanner(source)).parse()
         generator = Generator(ast, args.output)
         generator.generate()
     except FileNotFoundError as e:
