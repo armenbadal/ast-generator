@@ -1,4 +1,4 @@
-@package ast;
+{package ast;}
 
 Node
   Program[file:String]
@@ -6,6 +6,9 @@ Node
   Statement[]
     Sequence[items:[]Statement]
     If[condition:Expression,decision:Statement,alternative:Statement]
+    For[parameter:String,start:Expression,end:Expression,step:Expression,body:Statement]
+    While[condition:Expression,body:Statement]
+    Call[callee:String,arguments:[]Expression]
   Expression[]
     Variable[name:String]
     NumberLiteral[value:double]

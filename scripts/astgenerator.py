@@ -18,8 +18,6 @@ class Node:
 IDENTIFIER = 'ID'
 LEFT_BRACKET = '['
 RIGHT_BRACKET = ']'
-LEFT_BRACE = '{'
-RIGHT_BRACE = '}'
 COLON = ':'
 COMMA = ','
 VERBATIM = '@'
@@ -50,11 +48,12 @@ class Scanner:
             while self.position < self.length and self.source[self.position].isalnum():
                 self.position += 1
             return Lexeme(IDENTIFIER, self.source[start_pos:self.position])
-        if current_char == '@':
+        if current_char == '{':
             start_pos = self.position
-            while self.position < self.length and self.source[self.position] != '\n':
+            while self.position < self.length and self.source[self.position] != '}':
                 self.position += 1
-            return Lexeme(VERBATIM, self.source[start_pos+1:self.position])
+            self.position += 1
+            return Lexeme(VERBATIM, self.source[start_pos+1:self.position-1])
         elif current_char == '\n':
             self.position += 1
             self.line += 1
@@ -71,12 +70,6 @@ class Scanner:
         elif current_char == ']':
             self.position += 1
             return Lexeme(RIGHT_BRACKET)
-        elif current_char == '{':
-            self.position += 1
-            return Lexeme(LEFT_BRACE)
-        elif current_char == '}':
-            self.position += 1
-            return Lexeme(RIGHT_BRACE)
         elif current_char == ':':
             self.position += 1
             return Lexeme(COLON)
