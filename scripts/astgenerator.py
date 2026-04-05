@@ -178,6 +178,11 @@ class Generator:
             for ch in tree.children:
                 self._generate(ch)
 
+
+class JavaGenerator(Generator):
+    def __init__(self, ast, directory):
+        super().__init__(ast, directory)
+
     def _generate_node(self, node: Node):
         code = 'public '
 
@@ -238,6 +243,36 @@ class Generator:
         return f'{tp} {nm}'
 
 
+class CPPGenerator(Generator):
+    def __init__(self, ast, directory):
+        super().__init__(ast, directory)
+
+    def _generate_node(self, node: Node):
+        code = 'class ' + node.name
+
+        if node.parent is not None:
+            code += ' : public ' + node.parent.name
+
+        code += ' {\npublic:\n'
+
+        if node.slots is not None:
+            for nm, tp in node.slots:
+                decl = self._slot_declaration(nm, tp)
+                code += f'  {decl};\n'
+
+        code += '};\n'
+
+        path = os.path.join(self.directory, f'{node.name}.h')
+        with open(path, 'w') as f:
+            f.write(self.preamble)
+            f.write('\n\n')
+            f.write(code)
+
+    def _slot_declaration(self, nm, tp):
+        if tp.startswith('[]'):
+            tp = f'List<{tp[2:]}>'
+        return f'{tp} {nm}'
+
 
 if __name__ == "__main__":
     argp = argparse.ArgumentParser(description='Generate AST Java classes from a definition file')
@@ -249,7 +284,7 @@ if __name__ == "__main__":
         with open(args.input, 'r') as f:
             source = f.read()
         ast = Parser(Scanner(source)).parse()
-        generator = Generator(ast, args.output)
+        generator = CPPGenerator(ast, args.output)
         generator.generate()
     except FileNotFoundError as e:
         print(f'File not found: {e.filename}')
