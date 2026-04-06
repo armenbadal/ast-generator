@@ -1,0 +1,93 @@
+package: ast
+definitions:
+  - name: Node
+    type: interface
+    children:
+      - name: Type
+        children:
+          - name: ScalarType
+            slots:
+              - name: TypeName
+                type: String
+          - name: ArrayType
+            slots:
+              - name: Size
+                type: Integer
+              - name: BaseType
+                type: Type
+      - name: Declaration
+        slots:
+          - name: name
+            type: String
+          - name: type
+            type: Type
+      - name: Program
+        slots:
+          - name: file
+            type: String
+      - name: Subroutine
+        slots:
+          - name: name
+            type: String
+          - name: parameters
+            type: list of String
+          - name: body
+            type: Statement
+      - name: Statement
+        type: abstract class
+        children:
+          - name: Sequence
+            slots:
+              - name: items
+                type: list of Statement
+          - name: If
+            slots:
+              - name: condition
+                type: Expression
+              - name: decision
+                type: Statement
+              - name: alternative
+                type: Statement
+          - name: For
+            slots:
+              - name: parameter
+                type: String
+              - name: start
+                type: Expression
+              - name: end
+                type: Expression
+              - name: step
+                type: Expression
+              - name: body
+                type: Statement
+          - name: While
+            slots:
+              - name: condition
+                type: Expression
+              - name: body
+                type: Statement
+          - name: Call
+            slots:
+              - name: callee
+                type: String
+              - name: arguments
+                type: list of Expression
+      - name: Expression
+        type: abstract class
+        children:
+          - name: Variable
+            slots:
+              - name: name
+                type: String
+          - name: NumberLiteral
+            slots:
+              - name: value
+                type: double
+          - name: Binary
+            slots:
+              - name: operation
+                type: String
+              - name: left
+                type: Expression
+              - name: right
+                type: Expression

@@ -1,181 +1,89 @@
 import os
 import argparse
-class Node:
-    def __init__(self, name, slots):
-        self.name = name
-        self.slots = slots
-        self.parent = None
-        self.children = None
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+def load_ast_from_yaml(path):
+    if yaml is None:
+        raise ImportError('PyYAML is required to load YAML input. Install it with "pip install pyyaml".')
+
+    with open(path, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError('YAML root must be a mapping.')
+
+    preamble = []
+    if 'package' in data:
+        preamble.append(f'package {data["package"]};')
+
+    if 'preamble' in data:
+        raw_preamble = data['preamble']
+        if isinstance(raw_preamble, list):
+            preamble.extend(raw_preamble)
+        elif isinstance(raw_preamble, str):
+            preamble.append(raw_preamble)
+        else:
+            raise ValueError('preamble must be a string or list of strings.')
+
+    definitions = data.get('definitions')
+    if definitions is None:
+        raise ValueError('YAML must contain top-level "definitions".')
+    if not isinstance(definitions, list):
+        raise ValueError('definitions must be a list.')
+
+    validated = [validate_definition(defn) for defn in definitions]
+    tree = validated[0] if len(validated) == 1 else validated
+    return preamble, tree
 
 
-# Թոքեններ
-IDENTIFIER = 'ID'
-LEFT_BRACKET = '['
-RIGHT_BRACKET = ']'
-COLON = ':'
-COMMA = ','
-VERBATIM = '@'
-NEW_LINE = '↵'
-SPACE = '␣'
-EOF = 'EOF'
+def validate_definition(defn, parent_name=None):
+    if not isinstance(defn, dict):
+        raise ValueError('Each definition must be a mapping.')
 
-class Lexeme:
-    def __init__(self, token, value = None):
-        self.token = token
-        self.value = self.token if value is None else value
+    name = defn.get('name')
+    if not isinstance(name, str):
+        raise ValueError('Each node definition must have a string "name".')
 
-class Scanner:
-    def __init__(self, source):
-        self.source = source
-        self.length = len(source)
-        self.position = 0
-        self.line = 1
+    kind = defn.get('type')
+    if kind is not None and not isinstance(kind, str):
+        raise ValueError(f'type for node "{name}" must be a string if present.')
 
-    def next_lexeme(self):
-        if self._eos():
-            return Lexeme(EOF)
+    slots = None
+    if 'slots' in defn:
+        raw_slots = defn['slots']
+        if raw_slots is None:
+            slots = []
+        elif not isinstance(raw_slots, list):
+            raise ValueError(f'slots for node "{name}" must be a list.')
+        else:
+            slots = []
+            for slot in raw_slots:
+                if not isinstance(slot, dict):
+                    raise ValueError(f'Each slot for node "{name}" must be a mapping.')
+                slot_name = slot.get('name')
+                slot_type = slot.get('type')
+                if not isinstance(slot_name, str) or not isinstance(slot_type, str):
+                    raise ValueError(f'Each slot for node "{name}" must have string name and type.')
+                slots.append({'name': slot_name, 'type': slot_type})
 
-        if not self._eof() and self._peek().isalpha():
-            start_pos = self.position
-            while not self._eos() and self._peek().isalnum():
-                self.position += 1
-            return Lexeme(IDENTIFIER, self.source[start_pos:self.position])
+    children = None
+    if 'children' in defn:
+        raw_children = defn['children']
+        if not isinstance(raw_children, list):
+            raise ValueError(f'children for node "{name}" must be a list.')
+        children = [validate_definition(child, name) for child in raw_children]
 
-        if self._see('{'):
-            start_pos = self.position
-            while not self._eos() and not self._see('}'):
-                self.position += 1
-            if self._eos():
-                raise ValueError(f'Line {self.line}: Unclosed verbatim block. Expected closing brace but reached end of file.')
-            self.position += 1
-            return Lexeme(VERBATIM, self.source[start_pos+1:self.position-1])
-
-        if self._see('\n'):
-            self.position += 1
-            self.line += 1
-            return Lexeme(NEW_LINE)
-
-        if self._see(' '):
-            spaces = ''
-            while not self._eos() and self._peek().isspace():
-                self.position += 1
-                spaces += ' '
-            return Lexeme(SPACE, spaces)
-
-        if self._see('['):
-            self.position += 1
-            return Lexeme(LEFT_BRACKET)
-
-        if self._see(']'):
-            self.position += 1
-            return Lexeme(RIGHT_BRACKET)
-
-        if self._see(':'):
-            self.position += 1
-            return Lexeme(COLON)
-
-        if self._see(','):
-            self.position += 1
-            return Lexeme(COMMA)
-
-        raise ValueError(f'Unexpected character: {self.source[self.position]}')
-        
-    def _eos(self):
-        return self.position >= self.length
-    
-    def _peek(self):
-        return self.source[self.position]
-
-    def _see(self, char):
-        return not self._eos() and self.source[self.position] == char
-
-
-class Parser:
-    def __init__(self, scanner):
-        self.scanner = scanner
-        self.lookahead = self.scanner.next_lexeme()
-
-    def match(self, token):
-        if self.lookahead.token == token:
-            value = self.lookahead.value
-            self.lookahead = self.scanner.next_lexeme()
-            return value
-
-        raise ValueError(f'Line {self.scanner.line}: Expected token {token}, got {self.lookahead.token}.')
-
-    def has(self, token):
-        return self.lookahead.token == token
-
-    def parse(self):
-        verbatims = self.parse_verbatims()
-        definitions = self.parse_definitions('')
-        return (verbatims, definitions)
-    
-    def parse_verbatims(self):
-        verbatims = []
-        while self.has(VERBATIM):
-            verbatim = self.match(VERBATIM)
-            verbatims.append(verbatim)
-            self.parse_new_lines()
-        return verbatims
-
-    def parse_definitions(self, indent):
-        head = self.parse_definition(indent)
-
-        children = []
-        while self.has(SPACE) and self.lookahead.value == indent + '  ':
-            child = self.parse_definitions(indent + '  ')
-            child.parent = head
-            children.append(child)
-        if len(children) != 0:
-            head.children = children
-
-        return head
-
-    def parse_definition(self, indent):
-        if self.has(SPACE):
-            if self.lookahead.value == indent:
-                self.match(SPACE)
-            else:
-                raise ValueError('Expected correct indentation.')
-
-        name = self.match(IDENTIFIER)
-
-        slots = None
-        if self.has(LEFT_BRACKET):
-            self.match(LEFT_BRACKET)
-            slots = self.parse_slots()
-            self.match(RIGHT_BRACKET)
-
-        self.parse_new_lines()
-
-        return Node(name, slots)
-
-    def parse_slots(self):
-        if self.has(RIGHT_BRACKET):
-            return []
-
-        slots = []
-        slots.append(self.parse_slot())
-        while self.lookahead.token == COMMA:
-            self.match(COMMA)
-            slots.append(self.parse_slot())
-        return slots
-
-    def parse_slot(self):
-        name = self.match(IDENTIFIER)
-        self.match(COLON)
-        prefix = ''
-        if self.has(LEFT_BRACKET):
-            self.match(LEFT_BRACKET)
-            self.match(RIGHT_BRACKET)
-            prefix = '[]'
-        typ = self.match(IDENTIFIER)
-        return (name, prefix + typ)
-
-    def parse_new_lines(self):
-        while self.lookahead.token == NEW_LINE:
-            self.match(NEW_LINE)
+    node = {
+        'name': name,
+        'type': kind,
+        'slots': slots,
+        'children': children,
+    }
+    return node
 
 
 class Generator:
@@ -187,61 +95,77 @@ class Generator:
         os.makedirs(directory, exist_ok=True)
 
     def generate(self):
-        self._generate(self.tree)
+        if isinstance(self.tree, list):
+            for node in self.tree:
+                self._generate(node, None)
+        else:
+            self._generate(self.tree, None)
 
-    def _generate(self, tree: Node):
-        self._generate_node(tree)
-        if tree.children is not None:
-            for ch in tree.children:
-                self._generate(ch)
+    def _generate(self, node, parent):
+        self._generate_node(node, parent)
+        if node.get('children') is not None:
+            for child in node['children']:
+                self._generate(child, node)
+
+
+class JavaGenerator(Generator):
+    def __init__(self, ast, directory):
+        super().__init__(ast, directory)
 
     def _generate_node(self, node: Node):
         code = 'public '
 
-        if node.slots is None:
+        kind = node.get('type')
+        kind = kind.lower() if isinstance(kind, str) else None
+        if kind == 'interface':
             code += 'sealed interface '
+        elif kind == 'abstract class':
+            code += 'sealed abstract class '
+        elif kind == 'final class' or kind == 'class':
+            code += 'final class '
         else:
-            if node.children is None:
+            if node.get('slots') is None:
+                code += 'sealed interface '
+            elif node.get('children') is None:
                 code += 'final class '
             else:
                 code += 'sealed abstract class '
 
-        code += node.name
+        code += node['name']
 
-        if node.parent is not None:
-            pr = node.parent
-            if pr.slots is None:
+        if parent is not None:
+            if parent.get('slots') is None:
                 code += ' implements '
             else:
                 code += ' extends '
-            code += node.parent.name
+            code += parent['name']
 
-        if node.children is not None:
+        if node.get('children') is not None:
             code += ' permits '
-            code += ', '.join([n.name for n in node.children])
+            code += ', '.join([child['name'] for child in node['children']])
 
         code += ' {\n'
 
-        if node.slots is not None:
-            for nm, tp in node.slots:
-                decl = self._slot_declaration(nm, tp)
+        if node.get('slots') is not None:
+            for slot in node['slots']:
+                decl = self._slot_declaration(slot['name'], slot['type'])
                 code += f'  public {decl};\n'
 
         if 'final class' in code:
             params = []
             body = ''
-            for nm, tp in node.slots:
-                decl = self._slot_declaration(nm, tp)
+            for slot in node.get('slots', []):
+                decl = self._slot_declaration(slot['name'], slot['type'])
                 params.append(decl)
-                body += f'    this.{nm} = {nm};\n'
+                body += f'    this.{slot["name"]} = {slot["name"]};\n'
 
             paramcode = ', '.join(params)
-            code += f'\n  public {node.name}({paramcode}) {{\n{body}  }}\n'
+            code += f'\n  public {node["name"]}({paramcode}) {{\n{body}  }}\n'
 
         code += '}\n'
 
-        path = os.path.join(self.directory, f'{node.name}.java')
-        with open(path, 'w') as f:
+        path = os.path.join(self.directory, f'{node["name"]}.java')
+        with open(path, 'w', encoding='utf-8') as f:
             f.write(self.preamble)
             f.write('\n\n')
             if 'List<' in code:
@@ -255,20 +179,50 @@ class Generator:
         return f'{tp} {nm}'
 
 
+class CPPGenerator(Generator):
+    def __init__(self, ast, directory):
+        super().__init__(ast, directory)
+
+    def _generate_node(self, node: Node):
+        code = 'class ' + node.name
+
+        if node.parent is not None:
+            code += ' : public ' + node.parent.name
+
+        code += ' {\npublic:\n'
+
+        if node.slots is not None:
+            for nm, tp in node.slots:
+                decl = self._slot_declaration(nm, tp)
+                code += f'  {decl};\n'
+
+        code += '};\n'
+
+        path = os.path.join(self.directory, f'{node.name}.h')
+        with open(path, 'w') as f:
+            f.write(self.preamble)
+            f.write('\n\n')
+            f.write(code)
+
+    def _slot_declaration(self, nm, tp):
+        if tp.startswith('[]'):
+            tp = f'List<{tp[2:]}>'
+        return f'{tp} {nm}'
+
 
 if __name__ == "__main__":
-    argp = argparse.ArgumentParser(description='Generate AST Java classes from a definition file')
-    argp.add_argument('input', help='path to input AST definition file')
-    argp.add_argument('output', help='output directory for generated .java files')
+    argp = argparse.ArgumentParser(description='Generate AST code from a YAML definition file')
+    argp.add_argument('input', help='path to input YAML AST definition file')
+    argp.add_argument('output', help='output directory for generated code files')
     args = argp.parse_args()
 
     try:
-        with open(args.input, 'r') as f:
-            source = f.read()
-        ast = Parser(Scanner(source)).parse()
-        generator = Generator(ast, args.output)
+        ast = load_ast_from_yaml(args.input)
+        generator = CPPGenerator(ast, args.output)
         generator.generate()
     except FileNotFoundError as e:
         print(f'File not found: {e.filename}')
+    except ImportError as e:
+        print(e)
     except ValueError as e:
         print(e)

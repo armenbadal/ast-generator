@@ -1,0 +1,23 @@
+package: ast
+definitions:
+  - name: Node
+    type: interface
+    children:
+      - name: Type
+        children:
+          - name: ScalarType
+            slots:
+              - name: TypeName
+                type: String
+          - name: ArrayType
+            slots:
+              - name: Size
+                type: Integer
+              - name: BaseType
+                type: Type
+      - name: Declaration
+        slots:
+          - name: name
+            type: String
+          - name: type
+            type: Type
