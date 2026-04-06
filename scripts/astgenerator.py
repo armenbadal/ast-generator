@@ -32,46 +32,63 @@ class Scanner:
         self.line = 1
 
     def next_lexeme(self):
-        if self.position >= self.length:
+        if self._eos():
             return Lexeme(EOF)
 
-        current_char = self.source[self.position]
-
-        if current_char.isalpha():
+        if not self._eof() and self._peek().isalpha():
             start_pos = self.position
-            while self.position < self.length and self.source[self.position].isalnum():
+            while not self._eos() and self._peek().isalnum():
                 self.position += 1
             return Lexeme(IDENTIFIER, self.source[start_pos:self.position])
-        if current_char == '{':
+
+        if self._see('{'):
             start_pos = self.position
-            while self.position < self.length and self.source[self.position] != '}':
+            while not self._eos() and not self._see('}'):
                 self.position += 1
+            if self._eos():
+                raise ValueError(f'Line {self.line}: Unclosed verbatim block. Expected closing brace but reached end of file.')
             self.position += 1
             return Lexeme(VERBATIM, self.source[start_pos+1:self.position-1])
-        elif current_char == '\n':
+
+        if self._see('\n'):
             self.position += 1
             self.line += 1
             return Lexeme(NEW_LINE)
-        elif current_char.isspace():
+
+        if self._see(' '):
             spaces = ''
-            while self.position < self.length and self.source[self.position].isspace():
+            while not self._eos() and self._peek().isspace():
                 self.position += 1
                 spaces += ' '
             return Lexeme(SPACE, spaces)
-        elif current_char == '[':
+
+        if self._see('['):
             self.position += 1
             return Lexeme(LEFT_BRACKET)
-        elif current_char == ']':
+
+        if self._see(']'):
             self.position += 1
             return Lexeme(RIGHT_BRACKET)
-        elif current_char == ':':
+
+        if self._see(':'):
             self.position += 1
             return Lexeme(COLON)
-        elif current_char == ',':
+
+        if self._see(','):
             self.position += 1
             return Lexeme(COMMA)
-        else:
-            raise ValueError(f'Unexpected character: {current_char}')
+
+        raise ValueError(f'Unexpected character: {self.source[self.position]}')
+        
+    def _eos(self):
+        return self.position >= self.length
+    
+    def _peek(self):
+        return self.source[self.position]
+
+    def _see(self, char):
+        return not self._eos() and self.source[self.position] == char
+
 
 class Parser:
     def __init__(self, scanner):
